@@ -8,7 +8,7 @@ dependencies = [
     "cs336-basics",
     "humanfriendly",
     "matplotlib",
-    "numpy",
+    "numpy<2",
     "pytest>=8",
     "regex>=2024.11.6",
     "torch~=2.6.0; sys_platform != 'darwin' or platform_machine != 'x86_64'",

@@ -183,7 +183,7 @@ class BasicsTransformerLM(nn.Module):
         num_layers: int,
         num_heads: int,
         d_ff: int,
-        rope_theta: float,
+        rope_theta: float = 10000.0,
     ):
         # Store the model configuration for serialization / deserialization
         self.config = {
@@ -525,3 +525,6 @@ class CausalMultiHeadSelfAttention(nn.Module):
 
 def silu(x: torch.Tensor):
     return x * torch.sigmoid(x)
+
+
+TransformerLM = BasicsTransformerLM
