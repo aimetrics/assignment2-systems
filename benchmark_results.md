@@ -16,3 +16,5 @@ device  warmup_steps  measure_steps model_size  mode  seq_len  batch_size  mean_
    mps             5             10      large train      512           4         3.4395        0.0584
 device  warmup_steps  measure_steps model_size  mode  seq_len  batch_size  mean_time_sec  std_time_sec
    mps             5             10         xl train      512           4       183.1581      265.3825
+device  warmup_steps  measure_steps model_size  mode  seq_len  batch_size  mean_time_sec  std_time_sec
+   mps             5             10       2.7b train      512           4       494.2856      118.1762
