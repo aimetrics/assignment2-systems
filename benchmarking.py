@@ -48,7 +48,7 @@ from cs336_basics.model import TransformerLM
 
 VOCAB_SIZE = 10_000
 if torch.cuda.is_available():
-    _DEFAULT_DEVICE = "cuda"
+    _DEFAULT_DEVICE = "cuda:1"
 elif torch.backends.mps.is_available():
     _DEFAULT_DEVICE = "mps"
 else:

@@ -1,20 +1,14 @@
 device  warmup_steps  measure_steps model_size    mode  seq_len  batch_size  mean_time_sec  std_time_sec
-   mps             5             10      small forward      512           4         0.1771        0.0008
+cuda:1             5             10      small forward      512           4         0.0887        0.0118
 device  warmup_steps  measure_steps model_size    mode  seq_len  batch_size  mean_time_sec  std_time_sec
-   mps             5             10     medium forward      512           4         0.5307         0.004
+cuda:1             5             10     medium forward      512           4         0.2837        0.0162
 device  warmup_steps  measure_steps model_size    mode  seq_len  batch_size  mean_time_sec  std_time_sec
-   mps             5             10      large forward      512           4         1.1224         0.019
+cuda:1             5             10      large forward      512           4         0.2842        0.0011
 device  warmup_steps  measure_steps model_size    mode  seq_len  batch_size  mean_time_sec  std_time_sec
-   mps             5             10         xl forward      512           4         2.2182        0.0168
+cuda:1             5             10         xl forward      512           4         0.5793        0.0005
 device  warmup_steps  measure_steps model_size    mode  seq_len  batch_size  mean_time_sec  std_time_sec
-   mps             5             10       2.7b forward      512           4         3.3069        0.0929
+cuda:1             5             10       2.7b forward      512           4         0.9019        0.0702
 device  warmup_steps  measure_steps model_size  mode  seq_len  batch_size  mean_time_sec  std_time_sec
-   mps             5             10      small train      512           4          0.542        0.0054
+cuda:1             5             10      small train      512           4         0.2733        0.0211
 device  warmup_steps  measure_steps model_size  mode  seq_len  batch_size  mean_time_sec  std_time_sec
-   mps             5             10     medium train      512           4         1.5992        0.0025
-device  warmup_steps  measure_steps model_size  mode  seq_len  batch_size  mean_time_sec  std_time_sec
-   mps             5             10      large train      512           4         3.4395        0.0584
-device  warmup_steps  measure_steps model_size  mode  seq_len  batch_size  mean_time_sec  std_time_sec
-   mps             5             10         xl train      512           4       183.1581      265.3825
-device  warmup_steps  measure_steps model_size  mode  seq_len  batch_size  mean_time_sec  std_time_sec
-   mps             5             10       2.7b train      512           4       494.2856      118.1762
+cuda:1             5             10     medium train      512           4         0.4193         0.001
