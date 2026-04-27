@@ -107,3 +107,19 @@ device  warmup_steps  measure_steps model_size    mode  bf16  seq_len  batch_siz
   cuda             5             10       2.7b forward False      512           4         0.8537        0.0009
 device  warmup_steps  measure_steps model_size    mode  bf16  seq_len  batch_size  mean_time_sec  std_time_sec
   cuda             5             10       2.7b forward False     1024           4         1.8208         0.005
+device  warmup_steps  measure_steps model_size  mode  bf16  seq_len  batch_size  mean_time_sec  std_time_sec
+  cuda             5             10       2.7b train  True      128           4         0.2335         0.002
+device  warmup_steps  measure_steps model_size    mode  bf16  seq_len  batch_size  mean_time_sec  std_time_sec
+  cuda             5             10       2.7b forward  True      128           4          0.091        0.0011
+device  warmup_steps  measure_steps model_size  mode  bf16  seq_len  batch_size  mean_time_sec  std_time_sec
+  cuda             5             10       2.7b train  True      256           4         0.2872        0.0013
+device  warmup_steps  measure_steps model_size    mode  bf16  seq_len  batch_size  mean_time_sec  std_time_sec
+  cuda             5             10       2.7b forward  True      256           4         0.0903        0.0009
+device  warmup_steps  measure_steps model_size  mode  bf16  seq_len  batch_size  mean_time_sec  std_time_sec
+  cuda             5             10       2.7b train  True      512           4         0.4899        0.0008
+device  warmup_steps  measure_steps model_size    mode  bf16  seq_len  batch_size  mean_time_sec  std_time_sec
+  cuda             5             10       2.7b forward  True      512           4         0.1544        0.0006
+device  warmup_steps  measure_steps model_size    mode  bf16  seq_len  batch_size  mean_time_sec  std_time_sec
+  cuda             5             10       2.7b forward  True     1024           4         0.3606        0.0008
+device  warmup_steps  measure_steps model_size  mode  bf16  seq_len  batch_size  mean_time_sec  std_time_sec
+  cuda             5             10       2.7b train  True     1024           4         1.1066        0.0013
