@@ -34,16 +34,22 @@
 #
 
 import argparse
+import math
 import statistics
 import pandas as pd
 import timeit
+from contextlib import contextmanager
 from dataclasses import dataclass
 
 import torch
 import torch.nn as nn
+import torch.cuda.nvtx as nvtx
+from einops import einsum
 
 # 你自己的 basics transformer
 from cs336_basics.model import TransformerLM
+import cs336_basics.model as _model_module
+from cs336_basics.nn_utils import softmax
 
 
 VOCAB_SIZE = 10_000
@@ -61,6 +67,12 @@ def synchronize():
         torch.cuda.synchronize()
     elif DEVICE == "mps":
         torch.mps.synchronize()
+
+
+@contextmanager
+def _nullctx():
+    """No-op context manager used when NVTX is disabled."""
+    yield
 
 @dataclass
 class ModelConfig:
@@ -181,6 +193,7 @@ def benchmark(
     warmup_steps: int,
     measure_steps: int,
     mode: str,
+    use_nvtx: bool = False,
 ):
     """
     mode:
@@ -193,7 +206,7 @@ def benchmark(
     timings = []
 
     # -------------------------
-    # Warmup
+    # Warmup  (no NVTX ranges — Nsight filter on "measure" excludes these)
     # -------------------------
     for _ in range(warmup_steps):
         model.zero_grad(set_to_none=True)
@@ -209,26 +222,86 @@ def benchmark(
     # -------------------------
     # Measurement
     # -------------------------
-    for _ in range(measure_steps):
-        model.zero_grad(set_to_none=True)
+    with nvtx.range("measure") if use_nvtx else _nullctx():
+        for step_i in range(measure_steps):
+            model.zero_grad(set_to_none=True)
 
-        start = timeit.default_timer()
+            start = timeit.default_timer()
 
-        if mode == "forward":
-            with torch.no_grad():
-                _ = run_forward_step(model, x)
-        else:
-            _ = run_train_step(model, x, y)
+            with nvtx.range(f"step_{step_i}") if use_nvtx else _nullctx():
+                if mode == "forward":
+                    with nvtx.range("forward") if use_nvtx else _nullctx():
+                        with torch.no_grad():
+                            _ = run_forward_step(model, x)
+                else:
+                    with nvtx.range("forward") if use_nvtx else _nullctx():
+                        logits = model(x)
+                        loss = torch.nn.functional.cross_entropy(
+                            logits.reshape(-1, logits.size(-1)),
+                            y.reshape(-1),
+                        )
+                    with nvtx.range("backward") if use_nvtx else _nullctx():
+                        loss.backward()
 
-        synchronize()
+            synchronize()
 
-        end = timeit.default_timer()
-        timings.append(end - start)
+            end = timeit.default_timer()
+            timings.append(end - start)
 
     mean_time = statistics.mean(timings)
     std_time = statistics.stdev(timings) if len(timings) > 1 else 0.0
 
     return timings, mean_time, std_time
+
+
+# ---------------------------------------------------------------------------
+# NVTX annotated replacements (monkey-patch targets)
+# ---------------------------------------------------------------------------
+
+def _annotated_scaled_dot_product_attention(Q, K, V, mask=None):
+    """Drop-in replacement for scaled_dot_product_attention with NVTX ranges."""
+    d_k = K.shape[-1]
+
+    with nvtx.range("attention_scores"):
+        attention_scores = einsum(Q, K, "... query d_k, ... key d_k -> ... query key") / math.sqrt(d_k)
+        if mask is not None:
+            attention_scores = torch.where(mask, attention_scores, float("-inf"))
+
+    with nvtx.range("softmax"):
+        attention_weights = softmax(attention_scores, dim=-1)
+
+    with nvtx.range("final_matmul"):
+        return einsum(attention_weights, V, "... query key, ... key d_v -> ... query d_v")
+
+
+def _annotated_swiglu_forward(self, x):
+    """Drop-in replacement for SwiGLU.forward with NVTX ranges."""
+    with nvtx.range("swiglu"):
+        with nvtx.range("w1_proj"):
+            w1_out = self.w1(x)
+        with nvtx.range("w3_proj"):
+            w3_out = self.w3(x)
+        with nvtx.range("silu_gate"):
+            gated = _model_module.silu(w1_out) * w3_out
+        with nvtx.range("w2_proj"):
+            return self.w2(gated)
+
+
+def _annotated_rmsnorm_forward(self, x):
+    """Drop-in replacement for RMSNorm.forward with NVTX range."""
+    with nvtx.range("rmsnorm"):
+        in_dtype = x.dtype
+        x = x.to(torch.float32)
+        rms = torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + self.eps)
+        x = x * rms
+        return (self.weight * x).to(in_dtype)
+
+
+def apply_nvtx_patches():
+    """Apply all NVTX monkey-patches to cs336_basics.model."""
+    _model_module.scaled_dot_product_attention = _annotated_scaled_dot_product_attention
+    _model_module.SwiGLU.forward = _annotated_swiglu_forward
+    _model_module.RMSNorm.forward = _annotated_rmsnorm_forward
 
 
 def parse_args():
@@ -280,6 +353,13 @@ def parse_args():
         help="Device to run on: cpu, cuda, mps (default: auto-detected, prefers cuda over cpu)",
     )
 
+    parser.add_argument(
+        "--nvtx",
+        action="store_true",
+        default=False,
+        help="Enable NVTX range annotations for Nsight Systems profiling",
+    )
+
     return parser.parse_args()
 
 
@@ -300,7 +380,11 @@ def main():
     print(f"warmup_steps   : {args.warmup_steps}", flush=True)
     print(f"measure_steps  : {args.measure_steps}", flush=True)
     print(f"mode           : {args.mode}", flush=True)
+    print(f"nvtx           : {args.nvtx}", flush=True)
     print("=" * 80, flush=True)
+
+    if args.nvtx:
+        apply_nvtx_patches()
 
     model = build_model(
         cfg=cfg,
@@ -319,6 +403,7 @@ def main():
         warmup_steps=args.warmup_steps,
         measure_steps=args.measure_steps,
         mode=args.mode,
+        use_nvtx=args.nvtx,
     )
 
     print("\nPer-step timings (seconds):")
