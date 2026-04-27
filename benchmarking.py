@@ -38,7 +38,7 @@ import math
 import statistics
 import pandas as pd
 import timeit
-from contextlib import contextmanager
+from contextlib import nullcontext
 from dataclasses import dataclass
 
 import torch
@@ -68,11 +68,6 @@ def synchronize():
     elif DEVICE == "mps":
         torch.mps.synchronize()
 
-
-@contextmanager
-def _nullctx():
-    """No-op context manager used when NVTX is disabled."""
-    yield
 
 @dataclass
 class ModelConfig:
@@ -194,16 +189,25 @@ def benchmark(
     measure_steps: int,
     mode: str,
     use_nvtx: bool = False,
+    dtype: torch.dtype | None = None,
 ):
     """
     mode:
         - forward
         - train
+    dtype:
+        None  → FP32 (no autocast)
+        torch.bfloat16 → BF16 mixed precision via torch.autocast
     """
 
     assert mode in ["forward", "train"]
 
     timings = []
+    autocast_ctx = (
+        torch.autocast(device=DEVICE, dtype=dtype)
+        if dtype is not None
+        else nullcontext()
+    )
 
     # -------------------------
     # Warmup  (no NVTX ranges — Nsight filter on "measure" excludes these)
@@ -212,35 +216,42 @@ def benchmark(
         model.zero_grad(set_to_none=True)
 
         if mode == "forward":
-            with torch.no_grad():
+            with autocast_ctx, torch.no_grad():
                 _ = run_forward_step(model, x)
         else:
-            _ = run_train_step(model, x, y)
+            with autocast_ctx:
+                logits = model(x)
+                loss = torch.nn.functional.cross_entropy(
+                    logits.reshape(-1, logits.size(-1)),
+                    y.reshape(-1),
+                )
+            loss.backward()
 
         synchronize()
 
     # -------------------------
     # Measurement
     # -------------------------
-    with nvtx.range("measure") if use_nvtx else _nullctx():
+    with nvtx.range("measure") if use_nvtx else nullcontext():
         for step_i in range(measure_steps):
             model.zero_grad(set_to_none=True)
 
             start = timeit.default_timer()
 
-            with nvtx.range(f"step_{step_i}") if use_nvtx else _nullctx():
+            with nvtx.range(f"step_{step_i}") if use_nvtx else nullcontext():
                 if mode == "forward":
-                    with nvtx.range("forward") if use_nvtx else _nullctx():
-                        with torch.no_grad():
+                    with nvtx.range("forward") if use_nvtx else nullcontext():
+                        with autocast_ctx, torch.no_grad():
                             _ = run_forward_step(model, x)
                 else:
-                    with nvtx.range("forward") if use_nvtx else _nullctx():
-                        logits = model(x)
-                        loss = torch.nn.functional.cross_entropy(
-                            logits.reshape(-1, logits.size(-1)),
-                            y.reshape(-1),
-                        )
-                    with nvtx.range("backward") if use_nvtx else _nullctx():
+                    with nvtx.range("forward") if use_nvtx else nullcontext():
+                        with autocast_ctx:
+                            logits = model(x)
+                            loss = torch.nn.functional.cross_entropy(
+                                logits.reshape(-1, logits.size(-1)),
+                                y.reshape(-1),
+                            )
+                    with nvtx.range("backward") if use_nvtx else nullcontext():
                         loss.backward()
 
             synchronize()
@@ -360,6 +371,13 @@ def parse_args():
         help="Enable NVTX range annotations for Nsight Systems profiling",
     )
 
+    parser.add_argument(
+        "--bf16",
+        action="store_true",
+        default=False,
+        help="Enable BF16 mixed precision via torch.autocast",
+    )
+
     return parser.parse_args()
 
 
@@ -380,6 +398,7 @@ def main():
     print(f"warmup_steps   : {args.warmup_steps}", flush=True)
     print(f"measure_steps  : {args.measure_steps}", flush=True)
     print(f"mode           : {args.mode}", flush=True)
+    print(f"bf16           : {args.bf16}", flush=True)
     print(f"nvtx           : {args.nvtx}", flush=True)
     print("=" * 80, flush=True)
 
@@ -404,6 +423,7 @@ def main():
         measure_steps=args.measure_steps,
         mode=args.mode,
         use_nvtx=args.nvtx,
+        dtype=torch.bfloat16 if args.bf16 else None,
     )
 
     print("\nPer-step timings (seconds):")
@@ -421,6 +441,7 @@ def main():
             "measure_steps": args.measure_steps,
             "model_size": args.model_size,
             "mode": args.mode,
+            "bf16": args.bf16,
             "seq_len": args.seq_len,
             "batch_size": args.batch_size,
             "mean_time_sec": round(mean_time, 4),
