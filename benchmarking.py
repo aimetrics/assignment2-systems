@@ -35,6 +35,7 @@
 
 import argparse
 import math
+import os
 import statistics
 import pandas as pd
 import timeit
@@ -43,6 +44,7 @@ from dataclasses import dataclass
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torch.cuda.nvtx as nvtx
 from einops import einsum
 
@@ -315,6 +317,66 @@ def apply_nvtx_patches():
     _model_module.RMSNorm.forward = _annotated_rmsnorm_forward
 
 
+def run_memory_profile(
+    model: nn.Module,
+    x: torch.Tensor,
+    y: torch.Tensor,
+    mode: str,
+    dtype: torch.dtype | None,
+    output_path: str,
+    warmup_steps: int = 2,
+):
+    """
+    Profile GPU memory allocation for one step using PyTorch's memory profiler.
+    Dumps a pickle snapshot to output_path for use with pytorch.org/memory_viz.
+
+    mode:
+        - forward  → inference only (no gradient, no optimizer)
+        - train    → forward + backward + AdamW optimizer step
+    """
+    assert mode in ["forward", "train"]
+    autocast_ctx = (
+        torch.autocast(device=DEVICE, dtype=dtype) if dtype is not None else nullcontext()
+    )
+    optimizer = torch.optim.AdamW(model.parameters()) if mode == "train" else None
+
+    # warmup — let CUDA allocator reach steady state before recording
+    for _ in range(warmup_steps):
+        model.zero_grad(set_to_none=True)
+        if mode == "forward":
+            with autocast_ctx, torch.no_grad():
+                _ = model(x)
+        else:
+            with autocast_ctx:
+                logits = model(x)
+                loss = F.cross_entropy(logits.reshape(-1, logits.size(-1)), y.reshape(-1))
+            loss.backward()
+            optimizer.step()
+        synchronize()
+
+    # start recording memory history
+    torch.cuda.memory._record_memory_history(max_entries=1_000_000)
+
+    # single profiled step
+    model.zero_grad(set_to_none=True)
+    if mode == "forward":
+        with autocast_ctx, torch.no_grad():
+            _ = model(x)
+    else:
+        with autocast_ctx:
+            logits = model(x)
+            loss = F.cross_entropy(logits.reshape(-1, logits.size(-1)), y.reshape(-1))
+        loss.backward()
+        optimizer.step()
+    synchronize()
+
+    # dump snapshot and stop recording
+    os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
+    torch.cuda.memory._dump_snapshot(output_path)
+    torch.cuda.memory._record_memory_history(enabled=None)
+    print(f"Memory snapshot saved to: {output_path}", flush=True)
+
+
 def parse_args():
     parser = argparse.ArgumentParser()
 
@@ -378,6 +440,20 @@ def parse_args():
         help="Enable BF16 mixed precision via torch.autocast",
     )
 
+    parser.add_argument(
+        "--memory_profile",
+        action="store_true",
+        default=False,
+        help="Run PyTorch memory profiler (outputs .pickle for pytorch.org/memory_viz)",
+    )
+
+    parser.add_argument(
+        "--output_dir",
+        type=str,
+        default=".",
+        help="Directory to write memory snapshot pickle files (used with --memory_profile)",
+    )
+
     return parser.parse_args()
 
 
@@ -400,6 +476,7 @@ def main():
     print(f"mode           : {args.mode}", flush=True)
     print(f"bf16           : {args.bf16}", flush=True)
     print(f"nvtx           : {args.nvtx}", flush=True)
+    print(f"memory_profile : {args.memory_profile}", flush=True)
     print("=" * 80, flush=True)
 
     if args.nvtx:
@@ -414,6 +491,22 @@ def main():
         batch_size=args.batch_size,
         seq_len=args.seq_len,
     )
+
+    if args.memory_profile:
+        fname = f"memory_{args.model_size}_{args.mode}_seq{args.seq_len}"
+        if args.bf16:
+            fname += "_bf16"
+        fname += ".pickle"
+        output_path = os.path.join(args.output_dir, fname)
+        run_memory_profile(
+            model=model,
+            x=x,
+            y=y,
+            mode=args.mode,
+            dtype=torch.bfloat16 if args.bf16 else None,
+            output_path=output_path,
+        )
+        return
 
     timings, mean_time, std_time = benchmark(
         model=model,
