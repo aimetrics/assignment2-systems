@@ -94,3 +94,13 @@ device  warmup_steps  measure_steps model_size  mode  seq_len  batch_size  mean_
   cuda             5             10       2.7b train      512           4         0.9293        0.0004
 device  warmup_steps  measure_steps model_size  mode  seq_len  batch_size  mean_time_sec  std_time_sec
   cuda             5             10       2.7b train      512           4         0.9291        0.0003
+device  warmup_steps  measure_steps model_size  mode  bf16  seq_len  batch_size  mean_time_sec  std_time_sec
+  cuda             5             10       2.7b train False      512           4         2.6409        0.0082
+device  warmup_steps  measure_steps model_size  mode  bf16  seq_len  batch_size  mean_time_sec  std_time_sec
+  cuda             5             10       2.7b train False      512           4         2.6458        0.0058
+device  warmup_steps  measure_steps model_size  mode  bf16  seq_len  batch_size  mean_time_sec  std_time_sec
+  cuda             5             10       2.7b train False      128           4         0.6785        0.0008
+device  warmup_steps  measure_steps model_size  mode  bf16  seq_len  batch_size  mean_time_sec  std_time_sec
+  cuda             5             10       2.7b train False      256           4         1.3123        0.0012
+device  warmup_steps  measure_steps model_size  mode  bf16  seq_len  batch_size  mean_time_sec  std_time_sec
+  cuda             5             10       2.7b train False      256           4         1.3132         0.001
