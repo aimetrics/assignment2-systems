@@ -536,7 +536,6 @@ def main():
             "mode": args.mode,
             "nvtx": args.nvtx,
             "bf16": args.bf16,
-            "memory_profile": args.memory_profile,
             "seq_len": args.seq_len,
             "batch_size": args.batch_size,
             "mean_time_sec": round(mean_time, 4),
