@@ -206,7 +206,7 @@ def benchmark(
 
     timings = []
     autocast_ctx = (
-        torch.autocast(device=DEVICE, dtype=dtype)
+        torch.autocast(device_type=DEVICE.split(":")[0], dtype=dtype)
         if dtype is not None
         else nullcontext()
     )
@@ -336,7 +336,7 @@ def run_memory_profile(
     """
     assert mode in ["forward", "train"]
     autocast_ctx = (
-        torch.autocast(device=DEVICE, dtype=dtype) if dtype is not None else nullcontext()
+        torch.autocast(device_type=DEVICE.split(":")[0], dtype=dtype) if dtype is not None else nullcontext()
     )
     optimizer = torch.optim.AdamW(model.parameters()) if mode == "train" else None
 
