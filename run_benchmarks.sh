@@ -4,7 +4,7 @@ set -euo pipefail
 
 MODEL_SIZES=(small medium large xl 2.7b)
 MODES=(forward train)
-WARMUP_STEPS=(5)
+WARMUP_STEPS=(1 2)
 
 SEQ_LEN=512
 BATCH_SIZE=4
