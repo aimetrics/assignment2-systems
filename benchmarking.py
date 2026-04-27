@@ -237,7 +237,7 @@ def parse_args():
     parser.add_argument(
         "--model_size",
         type=str,
-        default="small",
+        default="2.7b",
         choices=list(MODEL_SIZES.keys()),
     )
 
@@ -268,7 +268,7 @@ def parse_args():
     parser.add_argument(
         "--mode",
         type=str,
-        default="forward",
+        default="train",
         choices=["forward", "train"],
         help="forward = inference only, train = forward + backward",
     )

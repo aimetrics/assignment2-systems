@@ -78,3 +78,19 @@ device  warmup_steps  measure_steps model_size  mode  seq_len  batch_size  mean_
   cuda             1             10       2.7b train      512           4         0.9294        0.0004
 device  warmup_steps  measure_steps model_size  mode  seq_len  batch_size  mean_time_sec  std_time_sec
   cuda             2             10       2.7b train      512           4           0.93        0.0003
+device  warmup_steps  measure_steps model_size    mode  seq_len  batch_size  mean_time_sec  std_time_sec
+  cuda             5             10      small forward      512           4           0.02        0.0002
+device  warmup_steps  measure_steps model_size    mode  seq_len  batch_size  mean_time_sec  std_time_sec
+  cuda             5             10      small forward      512           4         0.0204           0.0
+device  warmup_steps  measure_steps model_size    mode  seq_len  batch_size  mean_time_sec  std_time_sec
+  cuda             5             10      small forward      512           4         0.0205        0.0001
+device  warmup_steps  measure_steps model_size    mode  seq_len  batch_size  mean_time_sec  std_time_sec
+  cuda             5             10       2.7b forward      512           4         0.3319        0.0001
+device  warmup_steps  measure_steps model_size    mode  seq_len  batch_size  mean_time_sec  std_time_sec
+  cuda             5             10       2.7b forward      512           4         0.3319        0.0001
+device  warmup_steps  measure_steps model_size  mode  seq_len  batch_size  mean_time_sec  std_time_sec
+  cuda             5             10       2.7b train      512           4         0.9288        0.0003
+device  warmup_steps  measure_steps model_size  mode  seq_len  batch_size  mean_time_sec  std_time_sec
+  cuda             5             10       2.7b train      512           4         0.9293        0.0004
+device  warmup_steps  measure_steps model_size  mode  seq_len  batch_size  mean_time_sec  std_time_sec
+  cuda             5             10       2.7b train      512           4         0.9291        0.0003
