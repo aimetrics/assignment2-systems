@@ -154,14 +154,8 @@ def benchmark_variant(
 ) -> tuple[float, float, float, float]:
     for _ in range(warmup_iters):
         out = attn_module(q, k, v, mask)
-        # 等 forward pass 完成后再开始 backward，保证 warmup 的每次迭代是串行的、完整的。
         synchronize(device)
-        # 在 forward pass 时会构建一个计算图（computation graph），记录每个操作的输入输出，用于 backward 时链式求导。
-        # retain_graph=False（默认值）的意思是：backward 完成后立即释放这个计算图。
-        # 如果设成 True，计算图会保留在内存里，允许对同一个 out 再次调用 .backward()。
-        # 但这里每次循环都会重新跑 forward 生成新的 out，不需要重复 backward，所以 False 可以及时释放内存，避免显存泄漏。
         out.backward(grad_out, retain_graph=False)
-        # 等 backward 完成后再清空梯度，避免清空还在计算中的梯度。
         synchronize(device)
         q.grad = None
         k.grad = None
@@ -170,7 +164,6 @@ def benchmark_variant(
     forward_times_ms: list[float] = []
     backward_times_ms: list[float] = []
     mem_before_backward_mib: list[float] = []
-
     for _ in range(measure_iters):
         t0 = default_timer()
         out = attn_module(q, k, v, mask)
@@ -283,7 +276,8 @@ def run_attention_benchmark(args: argparse.Namespace, device: torch.device, dtyp
                         variant=variant_name, d_model=d_model, seq_len=seq_len,
                         status="ok", forward_ms_mean=fwd_ms, backward_ms_mean=bwd_ms,
                         memory_before_backward_mib_mean=mem_mean,
-                        memory_before_backward_mib_max=mem_max, note="",
+                        memory_before_backward_mib_max=mem_max,
+                        note="",
                     ))
 
             except torch.cuda.OutOfMemoryError as exc:
@@ -293,7 +287,8 @@ def run_attention_benchmark(args: argparse.Namespace, device: torch.device, dtyp
                         variant=v, d_model=d_model, seq_len=seq_len, status="oom",
                         forward_ms_mean=None, backward_ms_mean=None,
                         memory_before_backward_mib_mean=None,
-                        memory_before_backward_mib_max=None, note=err,
+                        memory_before_backward_mib_max=None,
+                        note=err,
                     ))
                 torch.cuda.empty_cache()
 
@@ -304,7 +299,8 @@ def run_attention_benchmark(args: argparse.Namespace, device: torch.device, dtyp
                         variant=v, d_model=d_model, seq_len=seq_len, status="runtime_error",
                         forward_ms_mean=None, backward_ms_mean=None,
                         memory_before_backward_mib_mean=None,
-                        memory_before_backward_mib_max=None, note=err,
+                        memory_before_backward_mib_max=None,
+                        note=err,
                     ))
                 torch.cuda.empty_cache()
 
@@ -320,18 +316,18 @@ def run_attention_benchmark(args: argparse.Namespace, device: torch.device, dtyp
             writer.writerow(asdict(row))
 
     print("\nAttention benchmark results (vanilla):")
-    print("| d_model | seq_len | status | forward (ms) | backward (ms) | mem before bwd (MiB) |")
-    print("|---:|---:|---|---:|---:|---:|")
+    print("| d_model | seq_len | status | forward (ms) | backward (ms) | mem before bwd (MiB) mean | mem before bwd (MiB) max |")
+    print("|---:|---:|---|---:|---:|---:|---:|")
     for r in rows:
         if r.variant != "vanilla":
             continue
         if r.status != "ok":
-            print(f"| {r.d_model} | {r.seq_len} | {r.status} | - | - | - |")
+            print(f"| {r.d_model} | {r.seq_len} | {r.status} | - | - | - | - |")
         else:
             print(
                 f"| {r.d_model} | {r.seq_len} | ok "
                 f"| {r.forward_ms_mean:.3f} | {r.backward_ms_mean:.3f} "
-                f"| {r.memory_before_backward_mib_mean:.1f} |"
+                f"| {r.memory_before_backward_mib_mean:.1f} | {r.memory_before_backward_mib_max:.1f} |"
             )
 
     if args.compare_compile:
