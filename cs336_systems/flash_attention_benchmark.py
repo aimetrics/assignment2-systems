@@ -7,9 +7,13 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 import torch
-import triton.testing
 
-from systems_core.flash_attention_triton import get_flashattention_autograd_function_triton
+try:
+    import triton.testing as triton_testing  # type: ignore[import-not-found]
+except ModuleNotFoundError:
+    triton_testing = None
+
+from cs336_systems.flash_attention_triton import get_flashattention_autograd_function_triton
 
 
 @dataclass
@@ -70,6 +74,9 @@ def _bench_impl(
     warmup_ms: int,
     rep_ms: int,
 ) -> tuple[float, float, float]:
+    if triton_testing is None:
+        raise RuntimeError("Triton is required to run flash attention benchmarking.")
+
     q_fwd = q.detach().clone()
     k_fwd = k.detach().clone()
     v_fwd = v.detach().clone()
@@ -78,7 +85,7 @@ def _bench_impl(
         with torch.no_grad():
             forward_fn(q_fwd, k_fwd, v_fwd)
 
-    forward_ms = triton.testing.do_bench(run_forward, warmup=warmup_ms, rep=rep_ms)
+    forward_ms = triton_testing.do_bench(run_forward, warmup=warmup_ms, rep=rep_ms)
 
     q_bwd = q.detach().clone().requires_grad_(True)
     k_bwd = k.detach().clone().requires_grad_(True)
@@ -92,7 +99,7 @@ def _bench_impl(
             v_bwd.grad = None
         out.backward(do, retain_graph=True)
 
-    backward_ms = triton.testing.do_bench(run_backward_only, warmup=warmup_ms, rep=rep_ms)
+    backward_ms = triton_testing.do_bench(run_backward_only, warmup=warmup_ms, rep=rep_ms)
 
     def run_end_to_end():
         q_e2e = q.detach().clone().requires_grad_(True)
@@ -101,7 +108,7 @@ def _bench_impl(
         out_e2e = forward_fn(q_e2e, k_e2e, v_e2e)
         out_e2e.backward(do)
 
-    end_to_end_ms = triton.testing.do_bench(run_end_to_end, warmup=warmup_ms, rep=rep_ms)
+    end_to_end_ms = triton_testing.do_bench(run_end_to_end, warmup=warmup_ms, rep=rep_ms)
 
     if q_bwd.grad is not None:
         q_bwd.grad = None
@@ -136,6 +143,8 @@ def main() -> None:
         raise RuntimeError("This benchmark must run on CUDA.")
     if not torch.cuda.is_available():
         raise RuntimeError("CUDA is not available. Run this script on a machine with an NVIDIA GPU (ideally an H100).")
+    if triton_testing is None:
+        raise RuntimeError("Triton is required to run flash attention benchmarking.")
     if args.batch_size != 1:
         raise ValueError("Assignment benchmark requires batch size 1.")
 
@@ -151,11 +160,11 @@ def main() -> None:
                 k = torch.randn(args.batch_size, seq_len, d_model, device=device, dtype=dtype)
                 v = torch.randn(args.batch_size, seq_len, d_model, device=device, dtype=dtype)
                 do = torch.randn(args.batch_size, seq_len, d_model, device=device, dtype=dtype)
-                try:
-                    for impl_name, forward_fn in [
-                        ("pytorch_attention", _causal_attention),
-                        ("triton_flashattention2", lambda qq, kk, vv: flash_triton_cls.apply(qq, kk, vv, True)),
-                    ]:
+                for impl_name, forward_fn in [
+                    ("pytorch_attention", _causal_attention),
+                    ("triton_flashattention2", lambda qq, kk, vv: flash_triton_cls.apply(qq, kk, vv, True)),
+                ]:
+                    try:
                         f_ms, b_ms, e2e_ms = _bench_impl(
                             impl_name=impl_name,
                             forward_fn=forward_fn,
@@ -179,35 +188,38 @@ def main() -> None:
                                 note="",
                             )
                         )
-                except torch.cuda.OutOfMemoryError as exc:
-                    note = str(exc).splitlines()[0]
-                    rows.append(
-                        BenchmarkRow(
-                            implementation="pytorch_attention",
-                            dtype=dtype_name,
-                            seq_len=seq_len,
-                            d_model=d_model,
-                            forward_ms=None,
-                            backward_ms=None,
-                            end_to_end_ms=None,
-                            status="oom",
-                            note=note,
+                    except torch.cuda.OutOfMemoryError as exc:
+                        note = str(exc).splitlines()[0]
+                        rows.append(
+                            BenchmarkRow(
+                                implementation=impl_name,
+                                dtype=dtype_name,
+                                seq_len=seq_len,
+                                d_model=d_model,
+                                forward_ms=None,
+                                backward_ms=None,
+                                end_to_end_ms=None,
+                                status="oom",
+                                note=note,
+                            )
                         )
-                    )
-                    rows.append(
-                        BenchmarkRow(
-                            implementation="triton_flashattention2",
-                            dtype=dtype_name,
-                            seq_len=seq_len,
-                            d_model=d_model,
-                            forward_ms=None,
-                            backward_ms=None,
-                            end_to_end_ms=None,
-                            status="oom",
-                            note=note,
+                        torch.cuda.empty_cache()
+                    except RuntimeError as exc:
+                        note = str(exc).splitlines()[0]
+                        rows.append(
+                            BenchmarkRow(
+                                implementation=impl_name,
+                                dtype=dtype_name,
+                                seq_len=seq_len,
+                                d_model=d_model,
+                                forward_ms=None,
+                                backward_ms=None,
+                                end_to_end_ms=None,
+                                status="runtime_error",
+                                note=note,
+                            )
                         )
-                    )
-                    torch.cuda.empty_cache()
+                        torch.cuda.empty_cache()
 
     args.csv_path.parent.mkdir(parents=True, exist_ok=True)
     args.markdown_path.parent.mkdir(parents=True, exist_ok=True)

@@ -5,6 +5,8 @@ from typing import Type
 
 import torch
 
+from cs336_systems.flash_attention_pytorch import _flash_attention_backward_impl
+
 
 def _attention_and_lse_torch(
     q: torch.Tensor,
@@ -27,8 +29,8 @@ def _attention_and_lse_torch(
     return out, lse
 
 def _build_triton_impl() -> Type[torch.autograd.Function]:
-    import triton
-    import triton.language as tl
+    import triton  # type: ignore[import-not-found]
+    import triton.language as tl  # type: ignore[import-not-found]
 
     @triton.jit
     def flash_fwd_kernel(
@@ -93,8 +95,11 @@ def _build_triton_impl() -> Type[torch.autograd.Function]:
             v = tl.load(V_block_ptr, boundary_check=(0, 1))
             s = tl.dot(q, tl.trans(k)) * scale
 
+            k_rows = tl.arange(0, K_TILE_SIZE) + key_start
+            valid_k = k_rows < N_KEYS
+            s = tl.where(valid_k[None, :], s, -1e6)
+
             if is_causal:
-                k_rows = tl.arange(0, K_TILE_SIZE) + key_start
                 causal_mask = q_rows[:, None] >= k_rows[None, :]
                 s = tl.where(causal_mask, s, -1e6)
 
@@ -129,7 +134,7 @@ def _build_triton_impl() -> Type[torch.autograd.Function]:
             if q.device.type != "cuda":
                 out, lse = _attention_and_lse_torch(q, k, v, is_causal)
                 ctx.is_causal = is_causal
-                ctx.save_for_backward(q, k, v, lse)
+                ctx.save_for_backward(lse, q, k, v, out)
                 return out
 
             q = q.contiguous()
@@ -167,18 +172,13 @@ def _build_triton_impl() -> Type[torch.autograd.Function]:
                 is_causal=is_causal,
             )
             ctx.is_causal = is_causal
-            ctx.save_for_backward(q, k, v, lse)
+            ctx.save_for_backward(lse, q, k, v, out)
             return out
 
         @staticmethod
         def backward(ctx, do: torch.Tensor):
-            q, k, v, _lse = ctx.saved_tensors
-            with torch.enable_grad():
-                q_ = q.detach().requires_grad_(True)
-                k_ = k.detach().requires_grad_(True)
-                v_ = v.detach().requires_grad_(True)
-                out, _ = _attention_and_lse_torch(q_, k_, v_, ctx.is_causal)
-                dq, dk, dv = torch.autograd.grad(out, (q_, k_, v_), do, retain_graph=False, create_graph=False)
+            lse, q, k, v, out = ctx.saved_tensors
+            dq, dk, dv = _flash_attention_backward_impl(q, k, v, out, do, lse, ctx.is_causal)
             return dq, dk, dv, None
 
     return FlashAttentionAutogradFunctionTriton
@@ -202,16 +202,11 @@ except (ModuleNotFoundError, ImportError):
         def forward(ctx, q, k, v, is_causal=False):
             out, lse = _attention_and_lse_torch(q, k, v, is_causal)
             ctx.is_causal = is_causal
-            ctx.save_for_backward(q, k, v, lse)
+            ctx.save_for_backward(lse, q, k, v, out)
             return out
 
         @staticmethod
         def backward(ctx, do):
-            q, k, v, _lse = ctx.saved_tensors
-            with torch.enable_grad():
-                q_ = q.detach().requires_grad_(True)
-                k_ = k.detach().requires_grad_(True)
-                v_ = v.detach().requires_grad_(True)
-                out, _ = _attention_and_lse_torch(q_, k_, v_, ctx.is_causal)
-                dq, dk, dv = torch.autograd.grad(out, (q_, k_, v_), do)
+            lse, q, k, v, out = ctx.saved_tensors
+            dq, dk, dv = _flash_attention_backward_impl(q, k, v, out, do, lse, ctx.is_causal)
             return dq, dk, dv, None

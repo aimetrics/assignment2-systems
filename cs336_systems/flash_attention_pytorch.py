@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import math
+import platform
 
 import torch
 
+_compile_backend = "aot_eager" if platform.system() == "Darwin" else "inductor"
 
-@torch.compile
+
+@torch.compile(backend=_compile_backend)
 def _flash_attention_backward_impl(
     Q: torch.Tensor,
     K: torch.Tensor,
@@ -13,6 +16,7 @@ def _flash_attention_backward_impl(
     O: torch.Tensor,
     dO: torch.Tensor,
     L: torch.Tensor,
+    is_causal: bool = False,
 ):
     d_model = Q.shape[-1]
     scale = 1.0 / math.sqrt(d_model)
@@ -25,6 +29,12 @@ def _flash_attention_backward_impl(
     l_fp32 = L.to(torch.float32)
 
     S = torch.einsum("bqd,bkd->bqk", q_fp32, k_fp32) * scale
+    if is_causal:
+        n_queries = Q.shape[-2]
+        n_keys = K.shape[-2]
+        q_idx = torch.arange(n_queries, device=Q.device)[:, None]
+        k_idx = torch.arange(n_keys, device=Q.device)[None, :]
+        S = torch.where(q_idx >= k_idx, S, torch.full_like(S, -1e6))
     P = torch.exp(S - l_fp32.unsqueeze(-1))
 
     dV = torch.einsum("bqk,bqd->bkd", P, do_fp32)
@@ -47,15 +57,12 @@ class FlashAttention2PyTorchFunction(torch.autograd.Function):
 
     @staticmethod
     def forward(ctx, Q: torch.Tensor, K: torch.Tensor, V: torch.Tensor, is_causal: bool = False) -> torch.Tensor:
-        # is_causal is intentionally ignored for part (a), but kept in signature.
-        del is_causal
-
         batch_size, n_queries, d_model = Q.shape
         n_keys = K.shape[1]
         scale = 1.0 / math.sqrt(d_model)
 
         O = torch.empty_like(Q)
-        L = torch.empty((batch_size, n_queries), device=Q.device, dtype=Q.dtype)
+        L = torch.empty((batch_size, n_queries), device=Q.device, dtype=torch.float32)
 
         for q_start in range(0, n_queries, FlashAttention2PyTorchFunction.TILE_Q):
             q_end = q_start + FlashAttention2PyTorchFunction.TILE_Q
@@ -73,6 +80,10 @@ class FlashAttention2PyTorchFunction(torch.autograd.Function):
                 v_tile = V[:, k_start:k_end, :]
 
                 s_ij = torch.einsum("bqd,bkd->bqk", q_tile, k_tile).to(torch.float32) * scale
+                if is_causal:
+                    q_idx = torch.arange(q_start, q_start + q_tile_size, device=Q.device)[:, None]
+                    k_idx = torch.arange(k_start, k_start + k_tile.shape[1], device=Q.device)[None, :]
+                    s_ij = torch.where(q_idx >= k_idx, s_ij, torch.full_like(s_ij, -1e6))
                 m_ij = s_ij.max(dim=-1).values
                 m_new = torch.maximum(m_i, m_ij)
 
@@ -85,13 +96,14 @@ class FlashAttention2PyTorchFunction(torch.autograd.Function):
 
             o_i = o_i / l_i.unsqueeze(-1)
             O[:, q_start:q_end, :] = o_i.to(O.dtype)
-            L[:, q_start:q_end] = (m_i + torch.log(l_i)).to(L.dtype)
+            L[:, q_start:q_end] = m_i + torch.log(l_i)
 
+        ctx.is_causal = is_causal
         ctx.save_for_backward(L, Q, K, V, O)
         return O
 
     @staticmethod
     def backward(ctx, dO: torch.Tensor):
         L, Q, K, V, O = ctx.saved_tensors
-        dQ, dK, dV = _flash_attention_backward_impl(Q, K, V, O, dO, L)
+        dQ, dK, dV = _flash_attention_backward_impl(Q, K, V, O, dO, L, ctx.is_causal)
         return dQ, dK, dV, None
