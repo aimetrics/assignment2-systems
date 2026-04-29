@@ -423,8 +423,8 @@ def test_gradcheck():
     print("测试 4：gradcheck（数值微分验证梯度）")
     torch.manual_seed(0)
     ROWS, D = 8, 16   # gradcheck 很慢，用小尺寸
-    x = torch.randn(ROWS, D, device="cuda", dtype=torch.float32, requires_grad=True)
-    w = torch.randn(D,       device="cuda", dtype=torch.float32, requires_grad=True)
+    x = torch.randn(ROWS, D, device="cuda", dtype=torch.float64, requires_grad=True)
+    w = torch.randn(D,       device="cuda", dtype=torch.float64, requires_grad=True)
 
     passed = torch.autograd.gradcheck(
         f_weightedsum, (x, w),
