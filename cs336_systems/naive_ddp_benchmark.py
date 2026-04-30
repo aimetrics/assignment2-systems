@@ -16,7 +16,7 @@ from torch._utils import _flatten_dense_tensors, _unflatten_dense_tensors
 
 from cs336_basics.model import TransformerLM
 from cs336_basics.optimizer import AdamW
-from systems_core.ddp_bucketed import DDPBucketed
+from ddp_overlap_bucketed import DDPOverlapBucketed
 from ddp_overlap_individual_parameters import DDPOverlapIndividualParameters
 
 
@@ -187,13 +187,13 @@ def _worker(rank: int, args: argparse.Namespace, output_csv: str) -> None:
             rope_theta=args.rope_theta,
         ).to(device=device, dtype=dtype)
 
-        ddp_model: DDPOverlapIndividualParameters | DDPBucketed | None = None
+        ddp_model: DDPOverlapIndividualParameters | DDPOverlapBucketed | None = None
         train_module: torch.nn.Module
         if args.comm_strategy == "overlap_individual":
             ddp_model = DDPOverlapIndividualParameters(model)
             train_module = ddp_model
         elif args.comm_strategy == "overlap_bucketed":
-            ddp_model = DDPBucketed(model, bucket_size_mb=args.bucket_size_mb)
+            ddp_model = DDPOverlapBucketed(model, bucket_size_mb=args.bucket_size_mb)
             train_module = ddp_model
         else:
             # Keep model init in sync.
