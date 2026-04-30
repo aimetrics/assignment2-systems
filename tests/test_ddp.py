@@ -26,6 +26,16 @@ from .common import (
 logger = logging.getLogger(__name__)
 
 
+class ModelWithUnusedParameter(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.used = nn.Linear(4, 2, bias=False)
+        self.unused = nn.Linear(4, 2, bias=False)
+
+    def forward(self, x):
+        return self.used(x)
+
+
 @pytest.mark.parametrize("model_class", [ToyModel, ToyModelWithTiedWeights])
 @pytest.mark.parametrize("bucket_size_mb", [0.0016, 0.0001, 0.01])
 def test_DistributedDataParallelCPU(bucket_size_mb, model_class):
@@ -178,4 +188,52 @@ def _test_DistributedDataParallelCPU(
             non_parallel_model.parameters(), ddp_model.parameters()
         ):
             assert torch.allclose(non_parallel_model_parameter, ddp_model_parameter)
+    _cleanup_process_group()
+
+
+def test_DistributedDataParallelCPU_unused_parameter_in_bucket():
+    world_size = 2
+    mp.spawn(
+        _test_DistributedDataParallelCPU_unused_parameter_in_bucket,
+        args=(world_size,),
+        nprocs=world_size,
+        join=True,
+    )
+
+
+def _test_DistributedDataParallelCPU_unused_parameter_in_bucket(rank: int, world_size: int):
+    device = _setup_process_group(rank=rank, world_size=world_size, backend="gloo")
+    dist.barrier()
+
+    torch.manual_seed(rank)
+    non_parallel_model = ModelWithUnusedParameter().to(device)
+    ddp_model = get_ddp_bucketed(deepcopy(non_parallel_model), bucket_size_mb=1.0)
+
+    all_x = torch.randn(8, 4, device=device)
+    all_y = torch.randn(8, 2, device=device)
+    dist.broadcast(all_x, src=0)
+    dist.broadcast(all_y, src=0)
+
+    loss_fn = nn.MSELoss()
+    ddp_optimizer = optim.SGD(ddp_model.parameters(), lr=0.1)
+    non_parallel_optimizer = optim.SGD(non_parallel_model.parameters(), lr=0.1)
+
+    non_parallel_optimizer.zero_grad()
+    non_parallel_loss = loss_fn(non_parallel_model(all_x), all_y)
+    non_parallel_loss.backward()
+    non_parallel_optimizer.step()
+
+    ddp_bucketed_on_train_batch_start(ddp_model=ddp_model, optimizer=ddp_optimizer)
+    ddp_optimizer.zero_grad()
+    local_bs = all_x.size(0) // world_size
+    offset = rank * local_bs
+    ddp_loss = loss_fn(ddp_model(all_x[offset : offset + local_bs]), all_y[offset : offset + local_bs])
+    ddp_loss.backward()
+    ddp_bucketed_on_after_backward(ddp_model=ddp_model, optimizer=ddp_optimizer)
+    ddp_optimizer.step()
+
+    if rank == 0:
+        assert torch.allclose(non_parallel_model.used.weight, ddp_model.module.used.weight)
+        assert ddp_model.module.unused.weight.grad is None
+        assert torch.allclose(non_parallel_model.unused.weight, ddp_model.module.unused.weight)
     _cleanup_process_group()

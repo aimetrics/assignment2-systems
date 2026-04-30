@@ -144,6 +144,7 @@ class DDPOverlapBucketed(torch.nn.Module):
 
     def start_train_batch(self) -> None:
         self._handles.clear()
+
         for bucket in self._buckets:
             bucket.pending = len(bucket.params)
             bucket.launched = False
@@ -151,15 +152,34 @@ class DDPOverlapBucketed(torch.nn.Module):
             bucket.handle = None
 
     def forward(self, *inputs, **kwargs):
+        if any(bucket.launched for bucket in self._buckets):
+            raise RuntimeError(
+                "start_train_batch() was not called for the current step. "
+                "Please call it after optimizer.step() and before the next forward pass."
+            )
         return self.module(*inputs, **kwargs)
 
     def finish_gradient_synchronization(self) -> None:
-        # Step 1：等待所有异步通信排入 GPU 队列
+        # Step 1：对没有凑齐的 bucket 也补发 all-reduce；unused 参数用 0 梯度占位。
+        for bucket in self._buckets:
+            if bucket.launched:
+                continue
+            flat_chunks = []
+            for p in bucket.params:
+                if p.grad is None:
+                    flat_chunks.append(torch.zeros_like(p).contiguous().view(-1))
+                else:
+                    flat_chunks.append(p.grad.contiguous().view(-1))
+            bucket.flat_grad = torch.cat(flat_chunks)
+            bucket.handle = dist.all_reduce(bucket.flat_grad, op=dist.ReduceOp.SUM, async_op=True)
+            bucket.launched = True
+            self._handles.append(bucket.handle)
+
+        # Step 2：等待所有异步通信排入 GPU 队列
         for handle in self._handles:
             handle.wait()
-        self._handles.clear()
 
-        # Step 2：对每个 bucket 的梯度做后处理
+        # Step 3：对每个 bucket 的梯度做后处理
         for bucket in self._buckets:
             if bucket.flat_grad is None:
                 continue
@@ -170,5 +190,10 @@ class DDPOverlapBucketed(torch.nn.Module):
                 n = param.numel()
                 grad_view = bucket.flat_grad[offset : offset + n].view_as(param)
                 # ← in-place 写回，不改变 param.grad 的内存地址
-                param.grad.copy_(grad_view)
+                if param.grad is None:
+                    if torch.count_nonzero(grad_view).item() != 0:
+                        param.grad = grad_view.clone()
+                else:
+                    param.grad.copy_(grad_view)
                 offset += n
+        self._handles.clear()
