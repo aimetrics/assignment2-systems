@@ -8,6 +8,7 @@ from cs336_systems.flash_attention_pytorch import FlashAttention2PyTorchFunction
 from cs336_systems.flash_attention_triton import FlashAttentionAutogradFunctionTriton
 from cs336_systems.ddp_overlap_individual_parameters import DDPOverlapIndividualParameters
 from cs336_systems.ddp_overlap_bucketed import DDPOverlapBucketed
+from cs336_systems.sharded_optimizer import ShardedOptimizer
 
 
 
@@ -136,4 +137,4 @@ def get_sharded_optimizer(params, optimizer_cls: Type[torch.optim.Optimizer], **
     Returns:
         Instance of sharded optimizer.
     """
-    raise NotImplementedError
+    return ShardedOptimizer(params, optimizer_cls, **kwargs)
